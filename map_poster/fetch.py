@@ -13,6 +13,7 @@ from geopandas import GeoDataFrame
 from pathlib import Path
 from geopy.geocoders import Nominatim
 import asyncio
+import numpy as np
 
 WATER_POLY_DIR = Path("cache/water_polygons")
 
@@ -27,10 +28,13 @@ def fetch_ocean_polygons(point, dist, refresh_cache, coastline=None):
         return gpd.GeoDataFrame()  # return empty GeoDataFrame
 
     lat, lon = point
+    lat_offset = dist / 111_000  # 1 deg latitude ≈ 111 km
+    lon_offset = dist / (111_000 * np.cos(np.radians(lat)))  # scale by latitude
+
     # Compute bounding box from coastline
     minx, miny, maxx, maxy = coastline.total_bounds
-    minx, miny = min(minx, lon - dist), min(miny, lat - dist)
-    maxx, maxy = max(maxx, lon + dist), max(maxy, lat + dist)
+    minx, miny = min(minx, lon - lon_offset), min(miny, lat - lat_offset)
+    maxx, maxy = max(maxx, lon + lon_offset), max(maxy, lat + lat_offset)
 
     cache_key = f"ocean_{minx}_{miny}_{maxx}_{maxy}"
     cached = cache_get(cache_key)

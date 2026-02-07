@@ -14,6 +14,7 @@ from map_poster.font_management import add_text, add_attribution
 from map_poster.theme_management import load_theme
 from map_poster.fetch import fetch_features, fetch_graph, fetch_ocean_polygons, get_coordinates
 from pathlib import Path
+from lat_lon_parser import parse
 
 POSTERS_DIR = "posters"
 WATER_POLY_DIR = Path("cache/water_polygons")
@@ -102,15 +103,15 @@ def get_crop_limits(G_proj, center_lat_lon, fig, dist):
         (center_y - half_y, center_y + half_y),
     )
 
-def calculate_line_scaling(crop_xlim, crop_ylim, width, dpi):
+def calculate_line_scaling(crop_xlim, crop_ylim, width, dpi, px_per_m_ref):
     # --- Calculate linewidth scale factor ---
     # based on reference px per m, based on reference width, DPI and FOV (reference 17.067 inches)
     # This ensures linewidth scaling when changing picture dimensions
     # Reference poster (what you consider “good” line widths)
-    REF_WIDTH_IN = 17.067 # reference width in inches
-    REF_DPI = 300 # reference dpi
-    REF_FOV_X = 53334.375 # REF FOV based on compensated_dist, not just dist
-    px_per_m_ref = 0.096 # Calculating using above balues:px_per_m_ref = (REF_WIDTH_IN * REF_DPI) / REF_FOV_X
+    # REF_WIDTH_IN = 17.067 # reference width in inches
+    # REF_DPI = 300 # reference dpi
+    # REF_FOV_X = 53334.375 # REF FOV based on compensated_dist, not just dist
+    # px_per_m_ref = 0.096 # Calculating using above balues:px_per_m_ref = (REF_WIDTH_IN * REF_DPI) / REF_FOV_X
 
     # Compute effective FOV of current image after cropping
     fov_x = crop_xlim[1] - crop_xlim[0]
@@ -122,7 +123,7 @@ def calculate_line_scaling(crop_xlim, crop_ylim, width, dpi):
     return px_per_m_cur / px_per_m_ref
     
 
-def create_poster(city, country, point, dist, output_file, output_format, width=12, height=16, dpi=300, country_label=None, name_label=None, refresh_cache=False, display_city=None, display_country=None, fonts=None, pad_inches=0.05):
+def create_poster(city, country, point, dist, output_file, output_format, width=12, height=16, dpi=300, px_per_m_ref=0.096, country_label=None, name_label=None, refresh_cache=False, display_city=None, display_country=None, fonts=None, pad_inches=0.05):
     print(f"\nGenerating map for {city}, {country}...")
 
     #value init
@@ -179,7 +180,7 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
     ax.set_ylim(crop_ylim) 
 
     # Line scaling factor to ensure consistant line scale even when changing poster dimensions and dpi
-    line_scale_factor = calculate_line_scaling(crop_xlim, crop_ylim, width, dpi)
+    line_scale_factor = calculate_line_scaling(crop_xlim, crop_ylim, width, dpi, px_per_m_ref)
     
     # 3. Plot Layers
     # Layer 1: Polygons (filter to only plot polygon/multipolygon geometries, not points)
@@ -194,7 +195,7 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
         ("grass",   grass,        ['Polygon','MultiPolygon'],          THEME.get('grass', THEME.get('parks')),             None,        1),
         ("farmland",farmland,     ['Polygon','MultiPolygon'],          THEME.get('farmland', THEME.get('parks')),          None,        1),
         ("railway", railways,     ['LineString','MultiLineString'],    THEME.get('railway', THEME.get('road_primary')),    1.0,         6.2),
-        ("subtram", subtram,     ['LineString','MultiLineString'],     THEME.get('subtram', THEME.get('road_primary')),    0.8,         6)
+        ("subtram", subtram,      ['LineString','MultiLineString'],    THEME.get('subtram', THEME.get('road_primary')),    0.8,         6)
     ]
 
     # --- Plot all layers in a loop ---
@@ -211,12 +212,12 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
                 if 'Polygon' in geom_types or 'MultiPolygon' in geom_types:
                     projected.plot(ax=ax, facecolor=color, edgecolor='none', zorder=z)
                 else:  # Lines
-                    coll = projected.plot(ax=ax, color=color, linewidth=lw*line_scale_factor, zorder=z, alpha=0.7)
+                    projected.plot(ax=ax, color=color, linewidth=lw*line_scale_factor, zorder=z, alpha=0.7)
                     ax.collections[-1].set_capstyle("round")  # Round end of line
                     core_key = f"{layer_key}_core"
                     if core_key in THEME:
                         # Extra extra core line (good for adding a "glowing effect")
-                        coll = projected.plot(ax=ax, color=THEME[core_key], linewidth=0.2*line_scale_factor, zorder=z+0.1, alpha=0.7)
+                        projected.plot(ax=ax, color=THEME[core_key], linewidth=0.2*line_scale_factor, zorder=z+0.1, alpha=0.7)
                         ax.collections[-1].set_capstyle("round")  # Round end of line
 
     # Layer 2: Roads with hierarchy coloring, width, and order
@@ -228,36 +229,47 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
 
     # Define a road style library
     ROAD_STYLES = {
-        'path':           {'order': 0, 'color': THEME.get("road_track", THEME["road_default"]), 'width': 0.1},
-        'track':          {'order': 0, 'color': THEME.get("road_track", THEME["road_default"]), 'width': 0.1},
-        'pedestrian':     {'order': 0, 'color': THEME.get("road_track", THEME["road_default"]), 'width': 0.1},
-        "footway":        {'order': 0, 'color': THEME.get("road_track", THEME["road_default"]), 'width': 0.1},
-        "cycleway":       {'order': 0, 'color': THEME.get("road_track", THEME["road_default"]), 'width': 0.1},
-        'service':        {'order': 1, 'color': THEME.get("road_service", THEME["road_default"]), 'width': 0.4},
-        'residential':    {'order': 2, 'color': THEME.get("road_residential", THEME["road_default"]), 'width': 0.4},
-        'living_street':  {'order': 2, 'color': THEME.get("road_residential", THEME["road_default"]), 'width': 0.4},
-        'unclassified':   {'order': 2, 'color': THEME.get("road_residential", THEME["road_default"]), 'width': 0.4},
-        'tertiary':       {'order': 3, 'color': THEME.get("road_tertiary", THEME["road_default"]), 'width': 0.6},
-        'tertiary_link':  {'order': 3, 'color': THEME.get("road_tertiary", THEME["road_default"]), 'width': 0.6},
-        'secondary':      {'order': 4, 'color': THEME.get("road_secondary", THEME["road_default"]), 'width': 0.8},
-        'secondary_link': {'order': 4, 'color': THEME.get("road_secondary", THEME["road_default"]), 'width': 0.8},
-        'primary':        {'order': 5, 'color': THEME.get("road_primary", THEME["road_default"]), 'width': 1.0},
-        'primary_link':   {'order': 5, 'color': THEME.get("road_primary", THEME["road_default"]), 'width': 1.0},
-        'trunk':          {'order': 6, 'color': THEME.get("road_primary", THEME["road_default"]), 'width': 1.0},
-        'trunk_link':     {'order': 6, 'color': THEME.get("road_primary", THEME["road_default"]), 'width': 1.0},
-        'motorway':       {'order': 7, 'color': THEME.get("road_motorway", THEME["road_default"]), 'width': 1.2},
-        'motorway_link':  {'order': 7, 'color': THEME.get("road_motorway", THEME["road_default"]), 'width': 1.2},
+        'path':           {'order': 0, 'theme_key': 'road_track', 'width': 0.1},
+        'track':          {'order': 0, 'theme_key': 'road_track', 'width': 0.1},
+        'pedestrian':     {'order': 0, 'theme_key': 'road_track', 'width': 0.1},
+        "footway":        {'order': 0, 'theme_key': 'road_track', 'width': 0.1},
+        "cycleway":       {'order': 0, 'theme_key': 'road_track', 'width': 0.1},
+        'service':        {'order': 1, 'theme_key': 'road_service', 'width': 0.4},
+        'residential':    {'order': 2, 'theme_key': 'road_residential', 'width': 0.4},
+        'living_street':  {'order': 2, 'theme_key': 'road_residential', 'width': 0.4},
+        'unclassified':   {'order': 2, 'theme_key': 'road_residential', 'width': 0.4},
+        'tertiary':       {'order': 3, 'theme_key': 'road_tertiary', 'width': 0.6},
+        'tertiary_link':  {'order': 3, 'theme_key': 'road_tertiary', 'width': 0.6},
+        'secondary':      {'order': 4, 'theme_key': 'road_secondary', 'width': 0.8},
+        'secondary_link': {'order': 4, 'theme_key': 'road_secondary', 'width': 0.8},
+        'primary':        {'order': 5, 'theme_key': 'road_primary', 'width': 1.0},
+        'primary_link':   {'order': 5, 'theme_key': 'road_primary', 'width': 1.0},
+        'trunk':          {'order': 6, 'theme_key': 'road_primary', 'width': 1.0},
+        'trunk_link':     {'order': 6, 'theme_key': 'road_primary', 'width': 1.0},
+        'motorway':       {'order': 7, 'theme_key': 'road_motorway', 'width': 1.2},
+        'motorway_link':  {'order': 7, 'theme_key': 'road_motorway', 'width': 1.2},
     }
 
     # Apply styles to edges
-    edges["draw_order"] = edges["highway_norm"].map(lambda h: ROAD_STYLES.get(h, {'order':1})['order'])
-    edges["color"]      = edges["highway_norm"].map(lambda h: ROAD_STYLES.get(h, {'color':THEME["road_default"]})['color'])
-    edges["width"]      = edges["highway_norm"].map(lambda h: ROAD_STYLES.get(h, {'width':0.4})['width'])
+    edges["style"] = edges["highway_norm"].map(lambda h: ROAD_STYLES.get(h))
+    edges["draw_order"] = edges["style"].map(lambda s: s["order"] if s else 1)
+    edges["width"]      = edges["style"].map(lambda s: s["width"] if s else 0.4)
+    edges["theme_key"]  = edges["style"].map(lambda s: s["theme_key"] if s else "road_default")
+    edges["color"]      = edges["theme_key"].map(lambda k: THEME.get(k, THEME["road_default"]))
 
-    # Sort by draw order so smaller roads are plotted on top of larger ones
-    edges = edges.sort_values("draw_order")
-    coll = edges.plot(ax=ax,color=edges["color"],linewidth=edges["width"] * line_scale_factor,zorder=5)   
-    ax.collections[-1].set_capstyle("round")  # Round end of line
+    # Draw roads per hierarchy level
+    for order in sorted(edges["draw_order"].unique()):
+        subset = edges[edges["draw_order"] == order]
+
+        # Base pass
+        subset.plot(ax=ax,color=subset["color"],linewidth=subset["width"] * line_scale_factor,zorder=5 + order * 0.01)
+        ax.collections[-1].set_capstyle("round")
+
+        # Extra core line if defined in THEME
+        core_key = f"{subset.iloc[0]['theme_key']}_core"
+        if core_key in THEME:
+            subset.plot(ax=ax,color=THEME[core_key],linewidth= 0.3 * subset["width"] * line_scale_factor,zorder=5 + order * 0.01 + 0.005, alpha = 0.9) #add core lines in between defined road order
+            ax.collections[-1].set_capstyle("round")
 
     # Layer 3: Gradients (Top and Bottom)
     create_gradient_fade(ax, THEME['gradient_color'], location='bottom', zorder=10)
@@ -302,12 +314,15 @@ Examples:
     
     parser.add_argument('--city', '-c', type=str, help='City name')
     parser.add_argument('--country', '-C', type=str, help='Country name')
+    parser.add_argument("--latitude","-lat",dest="latitude",type=str,help="Override latitude center point")
+    parser.add_argument("--longitude","-long",dest="longitude",type=str,help="Override longitude center point")
     parser.add_argument('--country-label', dest='country_label', type=str, help='Override country text displayed on poster')
     parser.add_argument('--theme', '-t', type=str, default='feature_based', help='Theme name (default: feature_based)')
     parser.add_argument('--all-themes', '--All-themes', dest='all_themes', action='store_true', help='Generate posters for all themes')
     parser.add_argument('--distance', '-d', type=int, default=29000, help='Map radius in meters (default: 29000)')
     parser.add_argument('--width', '-W', type=float, default=12, help='Image width in inches (default: 12)')
     parser.add_argument('--height', '-H', type=float, default=16, help='Image height in inches (default: 16)')
+    parser.add_argument('--px_per_m', '-P', type=float, default=0.096, help='Reference px per meter for line width scaling (default: 0.096)')
     parser.add_argument('--list-themes', action='store_true', help='List all available themes')
     parser.add_argument('--format', '-f', default='png', choices=['png', 'svg', 'pdf'],help='Output format for the poster (default: png)')
     parser.add_argument('--dpi', type=int, default=300, help='DPI value for saving as png (default: 300)')
@@ -323,11 +338,17 @@ Examples:
     
     # Get coordinates and generate poster
     try:
-        coords = get_coordinates(args.city, args.country, args.refresh_cache)
+        if args.latitude and args.longitude:
+            lat = parse(args.latitude)
+            lon = parse(args.longitude)
+            coords = [lat, lon]
+            print(f"✓ Coordinates: {', '.join([str(i) for i in coords])}")
+        else:
+            coords = get_coordinates(args.city, args.country, args.refresh_cache)
         for theme_name in themes_to_generate:
             THEME = load_theme(theme_name)
             output_file = generate_output_filename(args.city, theme_name, args.format)
-            create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.width, args.height, dpi=args.dpi, country_label=args.country_label, refresh_cache=args.refresh_cache)
+            create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.width, args.height, dpi=args.dpi, px_per_m_ref=args.px_per_m, country_label=args.country_label, refresh_cache=args.refresh_cache)
         
         print("\n" + "=" * 50)
         print("✓ Poster generation complete!")
