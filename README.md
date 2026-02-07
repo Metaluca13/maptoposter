@@ -8,16 +8,16 @@ Generate beautiful, minimalist map posters for any city in the world.
 
 ## Examples
 
-| Field   | Marseille | Mumbai | Spain      | Japan    |
-|---------|-----------|--------|-----------|---------|
-| City    | Marseille | Mumbai | Barcelona | Tokyo   |
 | Theme   | forest    | contrast_zones | warm_beige | japanese_ink |
+|---------|-----------|--------|-----------|---------|
+| Country | France    | India  | Spain     | Japan    |
+| City    | Marseille | Mumbai | Barcelona | Tokyo   |
 | Poster  | <img src="example_posters/marseille_forest_20260207_202703.png" width="250"> | <img src="example_posters/mumbai_contrast_zones_20260207_210440.png" width="250"> | <img src="example_posters/barcelona_warm_beige_20260207_202016.png" width="250"> | <img src="example_posters/tokyo_japanese_ink_20260207_203144.png" width="250"> |
 
-| Field   | Switzerland | Aruba | Singapore | UAE       |
-|---------|------------|-------|-----------|----------|
-| City    | Zurich     | Aruba | Singapore | Dubai    |
 | Theme   | neon_cyberpunk | tropics | neon_cyberpunk | midnight_blue |
+|---------|-------------|-------|-----------|----------|
+| Country | Switzerland | Netherland | Singapore | UAE       |
+| City    | Zurich      | Aruba | Singapore | Dubai    |
 | Poster  | <img src="example_posters/zurich_neon_cyberpunk_20260207_183101.png" width="250"> | <img src="example_posters/aruba_tropics_20260207_201740.png" width="250"> | <img src="example_posters/singapore_neon_cyberpunk_20260131_165405.png" width="250"> | <img src="example_posters/dubai_midnight_blue_20260118_140807.png" width="250"> |
 
 
