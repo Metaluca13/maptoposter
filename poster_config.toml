@@ -5,6 +5,7 @@ dpi = 300
 px_per_m_ref = 0.096
 pad_inches = 0.00
 distance = 30000
+rotation = 0
 
 # -------------------------------
 # Road styles

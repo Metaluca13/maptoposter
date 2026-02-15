@@ -55,38 +55,45 @@ def generate_output_filename(city, country, theme_name, output_format):
     filename = f"{city_slug}_{theme_name}_{timestamp}.{ext}"
     return os.path.join(POSTERS_DIR, country, city, filename)
 
-def create_gradient_fade(ax, color, location='bottom', zorder=10):
-    """
-    Creates a fade effect at the top or bottom of the map.
-    """
-    vals = np.linspace(0, 1, 256).reshape(-1, 1)
-    gradient = np.hstack((vals, vals))
-    
-    rgb = mcolors.to_rgb(color)
-    my_colors = np.zeros((256, 4))
-    my_colors[:, 0] = rgb[0]
-    my_colors[:, 1] = rgb[1]
-    my_colors[:, 2] = rgb[2]
-    
-    if location == 'bottom':
-        my_colors[:, 3] = np.linspace(1, 0, 256)
-        extent_y_start = 0
-        extent_y_end = 0.25
-    else:
-        my_colors[:, 3] = np.linspace(0, 1, 256)
-        extent_y_start = 0.75
-        extent_y_end = 1.0
 
-    custom_cmap = mcolors.ListedColormap(my_colors)
-    
-    xlim = ax.get_xlim()
-    ylim = ax.get_ylim()
-    y_range = ylim[1] - ylim[0]
-    
-    y_bottom = ylim[0] + y_range * extent_y_start
-    y_top = ylim[0] + y_range * extent_y_end
-    
-    ax.imshow(gradient, extent=[xlim[0], xlim[1], y_bottom, y_top], aspect='auto', cmap=custom_cmap, zorder=zorder, origin='lower')
+def create_gradient_fade(ax, color, location='bottom', zorder=10, fade_fraction=0.25):
+    """
+    Creates a fade effect on a specified side of the map:
+    'bottom', 'top', 'left', or 'right'.
+
+    fade_fraction: fraction of axis to apply the fade (default 0.25)
+    """
+    rgb = mcolors.to_rgb(color)
+
+    # Create RGBA colormap: alpha goes from 1->0 or 0->1 depending on direction
+    alphas = np.linspace(1, 0, 256) if location in ['bottom', 'left'] else np.linspace(0, 1, 256)
+    my_colors = np.zeros((256, 4))
+    my_colors[:, :3] = rgb
+    my_colors[:, 3] = alphas
+    cmap = mcolors.ListedColormap(my_colors)
+
+    # Get axis limits
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    dx = x1 - x0
+    dy = y1 - y0
+
+    # Determine extent and gradient orientation
+    if location in ['bottom', 'top']:
+        gradient = np.linspace(0, 1, 256).reshape(-1, 1)
+        if location == 'bottom':
+            extent = [x0, x1, y0, y0 + fade_fraction * dy]
+        else:  # top
+            extent = [x0, x1, y1 - fade_fraction * dy, y1]
+    else:  # left or right
+        gradient = np.linspace(0, 1, 256).reshape(1, -1)
+        if location == 'left':
+            extent = [x0, x0 + fade_fraction * dx, y0, y1]
+        else:  # right
+            extent = [x1 - fade_fraction * dx, x1, y0, y1]
+
+    ax.imshow(gradient, extent=extent, aspect='auto', cmap=cmap, zorder=zorder, origin='lower')
+
     
 def get_crop_limits(G_proj, center_lat_lon, fig, dist):
     """
@@ -96,13 +103,7 @@ def get_crop_limits(G_proj, center_lat_lon, fig, dist):
     lat, lon = center_lat_lon
 
     # Project center point into graph CRS
-    center = (
-        ox.projection.project_geometry(
-            Point(lon, lat),
-            crs="EPSG:4326",
-            to_crs=G_proj.graph["crs"]
-        )[0]
-    )
+    center = (ox.projection.project_geometry(Point(lon, lat), crs="EPSG:4326", to_crs=G_proj.graph["crs"])[0])
     center_x, center_y = center.x, center.y
 
     fig_width, fig_height = fig.get_size_inches()
@@ -118,10 +119,14 @@ def get_crop_limits(G_proj, center_lat_lon, fig, dist):
     else:           # portrait → reduce width
         half_x = half_y * aspect
 
-    return (
-        (center_x - half_x, center_x + half_x),
-        (center_y - half_y, center_y + half_y),
-    )
+    return ((center_x - half_x, center_x + half_x),(center_y - half_y, center_y + half_y))
+
+def rotate_geometry(gdf, angle, origin):
+    """Clockwise rotation"""
+    if angle == 0: return gdf
+    gdf = gdf.copy()
+    gdf["geometry"] = gdf.rotate(-angle, origin=origin)
+    return gdf
 
 def calculate_line_scaling(crop_xlim, crop_ylim, width, dpi, px_per_m_ref):
     # --- Calculate linewidth scale factor ---
@@ -143,17 +148,18 @@ def calculate_line_scaling(crop_xlim, crop_ylim, width, dpi, px_per_m_ref):
     return px_per_m_cur / px_per_m_ref
     
 
-def create_poster(city, country, point, dist, output_file, output_format, width=12, height=16, dpi=300, px_per_m_ref=0.096, country_label=None, name_label=None, refresh_cache=False, display_city=None, display_country=None, fonts=None, pad_inches=0.05):
+def create_poster(city, country, point, dist, output_file, output_format, width=12, height=16, dpi=300, px_per_m_ref=0.096, country_label=None, name_label=None, refresh_cache=False, display_city=None, display_country=None, fonts=None, pad_inches=0.05, rotation=0, gradient_sides=['bottom', 'top'], fade_fraction=0.25):
     print(f"\nGenerating map for {city}, {country}...")
 
     #value init
     display_city = display_city or name_label or city
     display_country = display_country or country_label or country
-    compensated_dist = dist * (max(height, width) / min(height, width))/4 # To compensate for viewport crop
+    #compensated_dist = dist * (max(height, width) / min(height, width))/4 # To compensate for viewport crop
+    # We multiply by 1.5 to provide a safe margin for the diagonals after rotation
+    rotation_buffer = 1.5 if rotation != 0 else 1.0
+    compensated_dist = dist * (max(height, width) / min(height, width)) / 4 * rotation_buffer
 
     # 1. Fetch Street Network and layers
-    # Define layers and their specific tags
-
     results = {}
     with tqdm(total=len(LAYERS), desc="Map data", ncols=80, bar_format='{desc:30.30} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}') as pbar:
         ordered_layers = map_poster.cli.resolve_layer_order(LAYERS)     #Ensure layers are fetched in a safe order
@@ -179,7 +185,7 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
     G = results["street_network"]
     if G is None: raise RuntimeError("Failed to retrieve street network data.")
 
-    # Handle aeroway data
+    # Handle aeroway runway convertion from line+width to polygons
     aeroway = results.pop("aeroway", None)
     if aeroway is not None:
         polygons, lines = convert_linewidth_to_poly(aeroway)
@@ -199,9 +205,10 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
 
     # Project graph to a metric CRS so distances and aspect are linear (meters)
     G_proj = ox.project_graph(G)
+    center_pt = ox.projection.project_geometry(Point(point[1], point[0]), to_crs=G_proj.graph["crs"])[0]
 
     # Determine cropping limits to maintain the poster aspect ratio
-    crop_xlim, crop_ylim = get_crop_limits(G_proj, point, fig, compensated_dist)
+    crop_xlim, crop_ylim = get_crop_limits(G_proj, point, fig, compensated_dist / rotation_buffer)
     ax.set_xlim(crop_xlim)
     ax.set_ylim(crop_ylim) 
 
@@ -209,7 +216,6 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
     line_scale_factor = calculate_line_scaling(crop_xlim, crop_ylim, width, dpi, px_per_m_ref)
     
     # 3. Plot Layers
-    # Layer 1: Polygons (filter to only plot polygon/multipolygon geometries, not points)
     # --- Layer definitions for plotting ---
     print("Adding layers...")
 
@@ -226,6 +232,7 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
             projected = ox.projection.project_gdf(filtered)
         except Exception:
             projected = filtered.to_crs(G_proj.graph['crs'])
+        projected = rotate_geometry(projected, rotation, center_pt)
 
         color = THEME.get(layer_conf.get("color_theme_key")) or THEME.get(layer_conf.get("fallback_keys")) or THEME.get("bg")
         lw = layer_conf.get("linewidth", 0)
@@ -242,9 +249,10 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
                 projected.plot(ax=ax, color=THEME[core_key], linewidth=0.2*line_scale_factor, zorder=z+0.1, alpha=alpha)
                 ax.collections[-1].set_capstyle("round")
 
-    # Layer 2: Roads with hierarchy coloring, width, and order
+    # Roads with hierarchy coloring, width, and order
     print("Applying road hierarchy...")
     edges = ox.graph_to_gdfs(G_proj, nodes=False, edges=True)    # Convert graph edges to GeoDataFrame
+    edges = rotate_geometry(edges, rotation, center_pt)
 
     # Normalize highway values (take first element if list, fallback to 'unclassified')
     edges["highway_norm"] = edges["highway"].apply(lambda h: (h[0] if isinstance(h, list) and h else h) or 'unclassified')
@@ -270,19 +278,22 @@ def create_poster(city, country, point, dist, output_file, output_format, width=
             subset.plot(ax=ax,color=THEME[core_key],linewidth= 0.3 * subset["width"] * line_scale_factor,zorder=5 + order * 0.01 + 0.005, alpha = 0.9) #add core lines in between defined road order
             ax.collections[-1].set_capstyle("round")
 
-    # Layer 3: Gradients (Top and Bottom)
-    create_gradient_fade(ax, THEME['gradient_color'], location='bottom', zorder=10)
-    create_gradient_fade(ax, THEME['gradient_color'], location='top', zorder=10)
+    # 4. Add Gradients
+    #gradient_sides = ['bottom', 'top', 'left', 'right']  # choose which sides you want
+    if gradient_sides is not None:
+        print("Add fading gradients to poster")
+        for side in gradient_sides:
+            create_gradient_fade(ax, THEME['gradient_color'], location=side, zorder=10, fade_fraction = fade_fraction)
     
+    # 5. Typography - use custom fonts if provided, otherwise use default FONTS
+    print("Add Text elements")
     # Calculate scale factor based on smaller dimension (reference 12 inches)
     # This ensures text scales properly for both portrait and landscape orientations
     font_scale_factor = min(height, width) / 12.0
-
-    # 4. Typography - use custom fonts if provided, otherwise use default FONTS
     add_text(font_scale_factor, display_city, display_country, point, ax, THEME['text'], zorder=11, fonts=fonts)
     add_attribution(ax, THEME['text'], zorder=11)
  
-    # 5. Save
+    # 6. Save
     print(f"Saving to {output_file}...")
 
     fmt = output_format.lower()
@@ -319,9 +330,12 @@ Examples:
     parser.add_argument('--theme', '-t', type=str, default='feature_based', help='Theme name (default: feature_based)')
     parser.add_argument('--all-themes', '--All-themes', dest='all_themes', action='store_true', help='Generate posters for all themes')
     parser.add_argument('--distance', '-d', type=int, default=29000, help='Map radius in meters (default: 29000)')
+    parser.add_argument('--rotation', '-r', type=float, default=0, help='clockwise rotation of the map (default: 0)')
     parser.add_argument('--width', '-W', type=float, default=12, help='Image width in inches (default: 12)')
     parser.add_argument('--height', '-H', type=float, default=16, help='Image height in inches (default: 16)')
     parser.add_argument('--px_per_m', '-P', type=float, default=0.096, help='Reference px per meter for line width scaling (default: 0.096)')
+    parser.add_argument('--gradient-sides', '-gs', type=str, default="bottom,top", help="Comma-separated sides to add gradient on. Options: bottom, top, left, right. Pass 'none' to skip gradients entirely.")
+    parser.add_argument('--fade-fraction', '-ff', type=float, default=0.25, help="Fraction of the map covered by gradient fade (default: 0.25)")
     parser.add_argument('--list-themes', action='store_true', help='List all available themes')
     parser.add_argument('--format', '-f', default='png', choices=['png', 'svg', 'pdf'],help='Output format for the poster (default: png)')
     parser.add_argument('--dpi', type=int, default=300, help='DPI value for saving as png (default: 300)')
@@ -345,10 +359,16 @@ Examples:
             print(f"✓ Coordinates: {', '.join([str(i) for i in coords])}")
         else:
             coords = get_coordinates(args.city, args.country, args.refresh_cache)
+
+        if args.gradient_sides.lower() == 'none':
+            gradient_sides = None
+        else:
+            gradient_sides = [s.strip() for s in args.gradient_sides.split(',')]
+
         for theme_name in themes_to_generate:
             THEME = load_theme(theme_name)
             output_file = generate_output_filename(args.city, args.country, theme_name, args.format)
-            create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.width, args.height, dpi=args.dpi, px_per_m_ref=args.px_per_m, country_label=args.country_label, refresh_cache=args.refresh_cache, pad_inches=args.pad)
+            create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.width, args.height, dpi=args.dpi, px_per_m_ref=args.px_per_m, country_label=args.country_label, refresh_cache=args.refresh_cache, pad_inches=args.pad, rotation=args.rotation, gradient_sides=gradient_sides, fade_fraction = args.fade_fraction)
         
         print("\n" + "=" * 50)
         print("✓ Poster generation complete!")
