@@ -21,5 +21,7 @@
   "railway": "#2D4A3E",
   "road_default": "#7AAA90",
   "building": "#81D4B1",
-  "building_outline": "#5A947C"
+  "building_outline": "#5A947C",
+  "castle": "#D8D8D8",
+  "walls": "#878787"
 }
